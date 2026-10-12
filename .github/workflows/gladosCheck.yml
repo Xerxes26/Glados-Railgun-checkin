@@ -15,7 +15,7 @@ jobs:
   build:
     name: glados/railgun checkin
     runs-on: ubuntu-latest
-      
+
     permissions:
       contents: read
       actions: write
@@ -44,19 +44,40 @@ jobs:
         pip install requests
         pip install pypushdeer
 
-    # 执行 签到脚本
+    # 执行 签到脚本（tee 保存日志；pipefail 让脚本崩溃也能被察觉）
     - name: Running checkin
+      id: checkin
       run: |
-        python checkin.py
+        set -o pipefail
+        python checkin.py 2>&1 | tee checkin.log
       env:
         PUSHDEER_SENDKEY: ${{ secrets.PUSHDEER_SENDKEY }}
         GLADOS_COOKIES: ${{ secrets.GLADOS_COOKIES }}
         GLADOS_EXCHANGE_PLAN: ${{ secrets.GLADOS_EXCHANGE_PLAN }}
         GLADOS_VERBOSE: ${{ secrets.GLADOS_VERBOSE }}
 
+    # ↓↓↓ 新增：让签到失败变成"红色失败"，从而触发 GitHub 的失败邮件通知 ↓↓↓
+    # 背景：checkin.py 结尾是 main()，不返回错误码，签到失败时 GitHub 也显示绿色成功，
+    #       会导致 Cookie 过期几天甚至几周都无人察觉。这一步把失败显性化。
+    - name: Verify check-in result
+      if: always()
+      run: |
+        echo "----- 签到日志尾部 -----"
+        tail -n 15 checkin.log || true
+        echo "------------------------"
+        if grep -qE '失败[1-9]' checkin.log 2>/dev/null; then
+          echo "::error::检测到签到失败。最常见原因是 GLADOS_COOKIES 已过期 —— 请重新抓取 Cookie 并更新该 Secret。"
+          exit 1
+        fi
+        if ! grep -qE '(成功|重复)[1-9]' checkin.log 2>/dev/null; then
+          echo "::error::日志里既没有成功也没有重复签到记录，说明脚本异常结束。请查看上方日志。"
+          exit 1
+        fi
+        echo "结果正常：签到成功或今日已签到。"
+
     - name: Keep alive
-      uses: liskin/gh-workflow-keepalive@v1 
-        
+      uses: liskin/gh-workflow-keepalive@v1
+
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@v2
       with:
