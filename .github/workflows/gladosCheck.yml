@@ -45,11 +45,18 @@ jobs:
         pip install pypushdeer
 
     # 执行 签到脚本（tee 保存日志；pipefail 让脚本崩溃也能被察觉）
+    # 偶发失败（网络抖动 / 机场临时 5xx）自动重试一次，避免误报；
+    # Cookie 真失效时两次都会失败，仍然会报警。
     - name: Running checkin
       id: checkin
       run: |
         set -o pipefail
-        python checkin.py 2>&1 | tee checkin.log
+        python checkin.py 2>&1 | tee checkin.log || true
+        if grep -qE '失败[1-9]' checkin.log 2>/dev/null; then
+          echo "::warning::第一次签到失败，60 秒后自动重试一次"
+          sleep 60
+          python checkin.py 2>&1 | tee checkin.log
+        fi
       env:
         PUSHDEER_SENDKEY: ${{ secrets.PUSHDEER_SENDKEY }}
         GLADOS_COOKIES: ${{ secrets.GLADOS_COOKIES }}
